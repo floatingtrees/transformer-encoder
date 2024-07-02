@@ -13,7 +13,7 @@ encoder = TransformerWrapper(
 )
 
 x = torch.randint(0, 256, (1, 1024))
-model(x)
+y = encoder(x)
 
 '''
 z = 0
