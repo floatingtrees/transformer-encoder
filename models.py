@@ -105,11 +105,11 @@ def get_positional_encoding(max_len, d_model):
 
 
 class CompressionEncoder(nn.Module):
-    def __init__(self, encoding_dimensionality, dim, depth, heads, mlp_dim, dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, encoding_dimensionality, word_embedding_dim, dim, depth, heads, mlp_dim, dim_head = 64, dropout = 0., emb_dropout = 0.):
         super().__init__()
         self.dim = dim
-
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.word_embedding_dim = word_embedding_dim
+        self.cls_token = nn.Parameter(torch.randn(1, 1, word_embedding_dim))
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
@@ -121,7 +121,7 @@ class CompressionEncoder(nn.Module):
 
         cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
         
-        x =  x + get_positional_encoding(l, self.dim).to(device)
+        x =  x + get_positional_encoding(l, self.word_embedding_dim).to(device)
         x = torch.cat((cls_tokens, x), dim=1)
         x = self.dropout(x)
 
@@ -139,11 +139,13 @@ class OutputModel(nn.Module):
         super().__init__()
         self.dim = dim
         self.window_length = window_length
-        self.embeddings = nn.Embedding(50258, word_embedding_dim)
+        self.encoding_dimensionality = encoding_dimensionality
+
+        self.embeddings = nn.Embedding(num_tokens, word_embedding_dim)
         self.projection = nn.Linear(word_embedding_dim, encoding_dimensionality) # adjusts the dimensionality so it can be attended with the encoded vectors
-        self.positional_embedding_recent = nn.Parameter(torch.randn(window_length, dim)) # trained embedding of sliding window
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
-        self.offset_embedding = nn.Parameter(torch.randn(window_length, encoding_dimensionality)) # index by offset
+        self.positional_embedding_recent = nn.Parameter(torch.randn(1, window_length, word_embedding_dim)) # trained embedding of sliding window
+        self.cls_token = nn.Parameter(torch.randn(1, 1, encoding_dimensionality))
+        self.offset_embedding = nn.Parameter(torch.randn(window_length + 1, encoding_dimensionality)) # index by offset
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
@@ -156,15 +158,18 @@ class OutputModel(nn.Module):
             offset = self.offset_embedding[(offset, )]
         else:
             offset = self.offset_embedding[(self.window_length, )] # offsetting by 1024 is the same as 0, technically we have 1 unnecesary dim
-
+        offset = offset.reshape(1, 1, offset.numel()) # reshape in preperation for concatenation
         # process data to put in correct shape
-        b, l_compressed, _ = compressed.shape
-        compressed = compressed + get_positional_encoding(l_compressed, self.dim).to(device)
         _, l_recent, _ = recent.shape
+        recent = recent + self.positional_embedding_recent[:, :l_recent, :]
         recent = self.projection(recent)
 
-        cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b = b)
-        x = torch.cat((cls_tokens, offset, x), dim=1)
+        if compressed is not None:
+            b, l_compressed, _ = compressed.shape
+            compressed = compressed + get_positional_encoding(l_compressed, self.encoding_dimensionality).to(device)
+            x = torch.cat((self.cls_token, offset, compressed, recent), dim=1)
+        else:
+            x = torch.cat((self.cls_token, offset, recent), dim = 1)
         
         x = self.dropout(x)
 

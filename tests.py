@@ -29,3 +29,6 @@ encoded_vector = torch.cat((encoded_vector, encoded_vector), dim = -1)
 print(encoded_vector.shape)
 rearraged_tensor = rearrange(encoded_vector, '(num_chunks chunk_size) dim -> num_chunks chunk_size dim', num_chunks = num_chunks, chunk_size = chunk_size)
 print(rearraged_tensor, rearraged_tensor.shape)
+rearranged_encodings = rearrange(rearraged_tensor, 'num_chunks chunk_size dim -> 1 (num_chunks chunk_size) dim', num_chunks = num_chunks, chunk_size = chunk_size)
+
+print(rearranged_encodings, rearranged_encodings.shape)
